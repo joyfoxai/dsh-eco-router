@@ -1,0 +1,7 @@
+# dsh-eco-router — token-efficient model-routing flywheel.
+#
+# Consumes host services (`agents`, `fs`, `tools`) and publishes no service of
+# its own, so it sits loose (outside any isolate realm) like tool-bash/tool-goal.
+# Remove `disabled` once `@joyfoxai/dsh-eco-router` is installed/resolvable.
+- id: dsh-eco-router
+  name: '@joyfoxai/dsh-eco-router'

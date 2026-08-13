@@ -1,0 +1,86 @@
+# dsh-eco-router
+
+Token-efficient model-routing flywheel for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+
+Captures OpenSquilla's core idea — *"same budget, more capability"* — as a
+self-improving routing loop: observe every turn's **(task → model → result)**,
+distill a per-category routing table, persist it to `eco_router.json`, and
+expose an `eco_route` tool that recommends the cheapest historically-successful
+model for a given task.
+
+## What it does
+
+| Stage | Implementation |
+| --- | --- |
+| Observe the **task** | `agent/inbox/claimed` → user-message text + a coarse category (`media` / `code` / `research` / `documents` / `comm` / `general`) |
+| Observe the **model** | `agent/request` waterfall → the `{ provider, model }` routed for each step |
+| Observe the **result** | `tools/result` (tool name + `isError`) and `agent/error` |
+| Distill | aggregate per category into `{ turns, errors, models: { model: count } }` |
+| Persist | write the table to `eco_router.json` at each turn close |
+| Recommend | the `eco_route` tool, callable by the agent |
+
+All listeners are registered on the initiating **agent's scoped context**
+(`agent.ctx.on(...)`), the same pattern the harness's own
+`installModelSelection` uses, so they observe only this agent's traffic.
+
+## Layout
+
+```
+dsh-eco-router/
+├── src/index.ts           # the plugin: name / inject / Config / apply
+├── preset/
+│   ├── agent.cordis.yml   # sample composition row referencing this package
+│   └── preset.yml         # preset display metadata
+├── package.json
+├── tsconfig.json
+└── tsdown.config.ts
+```
+
+## Prerequisites
+
+> ⚠️ **Dependency status** — the `@deepseek-ai/*` packages this plugin depends
+> on (`@deepseek-ai/cordis`, `@deepseek-ai/schemastery`, `@deepseek-ai/dsh-agent`,
+> `@deepseek-ai/dsh-fs`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-tools`) are
+> **not yet published to npm**; they are `workspace:`-internal to the
+> [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) monorepo.
+> A plain `npm install` outside that repo will fail to resolve them.
+
+To build today, either:
+
+- **build inside the harness monorepo** — place this package under `packages/`
+  (or vendor it as a workspace) so the `@deepseek-ai/*` deps resolve as
+  workspace packages; or
+- **wait for upstream** to publish `@deepseek-ai/*` to npm, then pin the
+  `peerDependencies` versions and install normally.
+
+## Build
+
+```bash
+npm install
+npm run build          # tsdown → lib/index.js + lib/index.d.ts
+```
+
+`@deepseek-ai/dsh-*` packages are `peerDependencies`; install them alongside
+this package (or build inside a DeepSeek Harness dev environment where they are
+workspace packages).
+
+## Mount (as a preset)
+
+Copy this directory into your user preset root and mount it, or add one row to
+your own composition:
+
+```yaml
+- id: dsh-eco-router
+  name: '@joyfoxai/dsh-eco-router'
+```
+
+The plugin injects only host services (`agents`, `fs`, `tools`) and publishes
+no service of its own, so the row sits loose — it needs no isolate realm.
+
+## Open-sourcing / publishing
+
+1. `npm publish` this package (scope `@joyfoxai`, `access: public`).
+2. Users install it and reference it from their `agent.cordis.yml` by name.
+
+The dynamic Cordis Plugin this was ported from (`cordis_define`) is
+**process-local and not distributable**; this package is the shippable form.

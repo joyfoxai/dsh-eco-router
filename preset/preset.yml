@@ -1,0 +1,2 @@
+name: dsh-eco-router
+description: Token-efficient model-routing flywheel — observes (task → model → result), distills a routing table, and routes each task to the cheapest historically-successful model.
