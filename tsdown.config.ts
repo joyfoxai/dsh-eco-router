@@ -6,6 +6,7 @@ export default defineConfig({
   format: ['esm'],
   platform: 'node',
   target: 'es2024',
+  fixedExtension: false,
   dts: true,
   clean: true,
 })

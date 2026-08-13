@@ -33,8 +33,8 @@ export interface Config {
 
 /** Runtime configuration schema for the plugin. */
 export const Config: z<Config> = z.object({
-  routerPath: z.string().optional(),
-  maxTextChars: z.number().int().min(64).max(4000).default(500),
+  routerPath: z.string().default(''),
+  maxTextChars: z.number().min(64).max(4000).default(500),
 })
 
 type Category = 'media' | 'code' | 'research' | 'documents' | 'comm' | 'general'
@@ -85,8 +85,9 @@ export function apply(ctx: Context, config: Config = {}): void {
   const agentCtx = agent.ctx
 
   const cwd = agent.session.header.cwd
-  const routerPath = config.routerPath
-    ?? (typeof cwd === 'string' && cwd.length > 0
+  const routerPath = (typeof config.routerPath === 'string' && config.routerPath.length > 0)
+    ? config.routerPath
+    : (typeof cwd === 'string' && cwd.length > 0
       ? `${cwd.replace(/\/+$/, '')}/eco_router.json`
       : `${process.cwd()}/eco_router.json`)
 
