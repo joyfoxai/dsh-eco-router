@@ -46,7 +46,7 @@ DSH_BUILD_FACE=client npm run bundle   # 浏览器半部 → lib/client.js（需
 - `tiers` —— 有序模型 id，最便宜在前。`eco_route` 推荐该任务类型下无错误记录的最便宜档位。
 - `autoRoute` —— 为 `true` 时，插件会在 `agent/request` 瀑布里直接覆盖所路由的模型（而不只是推荐）。
 
-插件只注入宿主服务（`agents`、`fs`、`tools`、`settings`、`llm`），自身不发布任何服务，因此这一行直接平铺即可，无需 isolate 域。
+插件只注入宿主服务（`fs`、`tools`、`settings`、`llm`），自身不发布任何服务，因此这一行直接平铺即可，无需 isolate 域。
 
 ### 4. 设置界面（运行时配置）
 

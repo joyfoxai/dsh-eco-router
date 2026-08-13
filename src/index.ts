@@ -9,8 +9,9 @@
  * tier for a given task. With `autoRoute` enabled it also overrides the routed
  * model at the `agent/request` waterfall.
  *
- * `tiers` / `autoRoute` are runtime-editable through the `dsh-eco-router`
- * settings namespace (base = the composition `config`, user layer = the UI).
+ * Mounted as a preset row, so `ctx` is the agent's scoped context: the
+ * `agent/*` and `tools/result` listeners register directly on `ctx` and observe
+ * only this session's traffic.
  *
  * @module @joyfoxai/dsh-eco-router
  */
@@ -19,22 +20,22 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-// Module augmentations only: registers `ctx.agents`, `ctx.fs`, `ctx.tools`, `ctx.llm`,
-// `ctx.settings`, and the scoped agent/tool events on the Cordis interfaces.
-import type {} from '@deepseek-ai/dsh-agent'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+// Module augmentations only: registers ctx.fs / ctx.tools / ctx.llm / ctx.settings
+// and the scoped agent/tool events on the Cordis interfaces.
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-llm'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-agent'
 
 export const name = 'dsh-eco-router'
-export const inject = ['agents', 'fs', 'tools', 'settings', 'llm']
+export const inject = ['fs', 'tools', 'settings', 'llm']
 
 const SETTINGS_NS = settingsNamespace('dsh-eco-router')
 
 /** Composition configuration (static defaults; `tiers`/`autoRoute` become the settings `base`). */
 export interface Config {
-  /** Absolute path to persist the distilled routing table. Defaults to `<session cwd>/eco_router.json`. */
+  /** Path to persist the distilled routing table. Defaults to `eco_router.json` in the session workspace. */
   routerPath?: string
   /** Maximum characters of a user message kept for task classification. */
   maxTextChars?: number
@@ -130,21 +131,10 @@ async function enumerateModels(ctx: Context): Promise<ModelCatalogEntry[]> {
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const maxTextChars = config.maxTextChars ?? 500
-
-  const agent = ctx.agents.currentInitiator()
-  if (agent === undefined) {
-    throw new Error('dsh-eco-router: no initiating agent — mount this plugin inside an agent session')
-  }
-  const agentCtx = agent.ctx
-
-  const cwd = agent.session.header.cwd
   const routerPath = (typeof config.routerPath === 'string' && config.routerPath.length > 0)
     ? config.routerPath
-    : (typeof cwd === 'string' && cwd.length > 0
-      ? `${cwd.replace(/\/+$/, '')}/eco_router.json`
-      : `${process.cwd()}/eco_router.json`)
+    : 'eco_router.json'
 
-  // Settings: base = composition config; the user layer (UI) overrides tiers/autoRoute.
   const modelCatalog = await enumerateModels(ctx)
   let tiers = config.tiers ?? ['deepseek-v4-flash', 'deepseek-v4-pro']
   let autoRoute = config.autoRoute ?? false
@@ -238,9 +228,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     }
   }
 
-  const disposers: (() => void)[] = []
-
-  disposers.push(agentCtx.on('agent/inbox/claimed', (payload) => {
+  ctx.on('agent/inbox/claimed', (payload) => {
     try {
       const text = textOf(payload.message).slice(0, maxTextChars)
       if (text.trim().length === 0) return
@@ -249,9 +237,9 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       currentTurn = payload.turn
       ensureTurn(payload.turn)
     } catch { /* observer never breaks the loop */ }
-  }))
+  })
 
-  disposers.push(agentCtx.on('agent/request', async (payload, next) => {
+  ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
     try {
       currentTurn = payload.turn
@@ -269,9 +257,9 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       } catch { /* routing is advisory; never break the request */ }
     }
     return resolved
-  }))
+  })
 
-  disposers.push(agentCtx.on('tools/result', (exec, result) => {
+  ctx.on('tools/result', (exec, result) => {
     try {
       if (currentTurn === null) return
       const record = byTurn[currentTurn]
@@ -280,23 +268,17 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       record.tools.push({ name: exec.name, isError })
       if (isError) record.errors++
     } catch { /* observer never breaks the loop */ }
-  }))
+  })
 
-  disposers.push(agentCtx.on('agent/error', (payload) => {
+  ctx.on('agent/error', (payload) => {
     try {
       const record = ensureTurn(payload.turn)
       if (record !== undefined) record.errors++
     } catch { /* observer never breaks the loop */ }
-  }))
+  })
 
-  disposers.push(agentCtx.on('agent/turn-stopping', () => {
+  ctx.on('agent/turn-stopping', () => {
     void persist()
-  }))
-
-  ctx.effect(() => () => {
-    for (const dispose of disposers) {
-      try { dispose() } catch { /* ignore */ }
-    }
   })
 
   ctx.tools.register(defineTool({

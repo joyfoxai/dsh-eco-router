@@ -66,9 +66,9 @@ your own composition:
 - `autoRoute` — when `true`, the plugin also overrides the routed model at the
   `agent/request` waterfall, instead of only recommending it.
 
-The plugin injects only host services (`agents`, `fs`, `tools`, `settings`,
-`llm`) and publishes no service of its own, so the row sits loose — it needs no
-isolate realm.
+The plugin injects only host services (`fs`, `tools`, `settings`, `llm`) and
+publishes no service of its own, so the row sits loose — it needs no isolate
+realm.
 
 ### 4. Settings UI (runtime configuration)
 
