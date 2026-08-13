@@ -4,9 +4,9 @@ Token-efficient model-routing flywheel for the [DeepSeek Harness](https://github
 
 Captures OpenSquilla's core idea — *"same budget, more capability"* — as a
 self-improving routing loop: observe every turn's **(task → model → result)**,
-distill a per-category routing table, persist it to `eco_router.json`, and
-expose an `eco_route` tool that recommends the cheapest historically-successful
-model for a given task.
+distill a per-category routing table with per-model error counts, persist it to
+`eco_router.json`, and expose an `eco_route` tool that routes each task to the
+cheapest model tier that historically succeeded.
 
 > 📖 [简体中文文档](README.zh.md)
 
@@ -14,9 +14,10 @@ model for a given task.
 
 ![verify](docs/verify.png)
 
-Real build verification: the built `lib/index.js` loads, `apply()` registers the
-`eco_route` tool and attaches the five observers, a simulated turn is distilled
-into the routing table, and `eco_route` reads it back.
+Real build verification with two model tiers: after a `code` turn succeeds on
+`deepseek-v4-flash` and a `media` turn fails on it, `eco_route` routes `code`
+tasks to the cheap tier (`deepseek-v4-flash`) and escalates `media` tasks to the
+capable tier (`deepseek-v4-pro`).
 
 ## What it does
 
@@ -25,9 +26,10 @@ into the routing table, and `eco_route` reads it back.
 | Observe the **task** | `agent/inbox/claimed` → user-message text + a coarse category (`media` / `code` / `research` / `documents` / `comm` / `general`) |
 | Observe the **model** | `agent/request` waterfall → the `{ provider, model }` routed for each step |
 | Observe the **result** | `tools/result` (tool name + `isError`) and `agent/error` |
-| Distill | aggregate per category into `{ turns, errors, models: { model: count } }` |
+| Distill | aggregate per category into `{ turns, errors, models: { model: { uses, errors } } }` |
 | Persist | write the table to `eco_router.json` at each turn close |
-| Recommend | the `eco_route` tool, callable by the agent |
+| Recommend | `eco_route` → the cheapest tier with zero errors for the task type |
+| Route (opt-in) | `autoRoute: true` also overrides the routed model at `agent/request` |
 
 All listeners are registered on the initiating **agent's scoped context**
 (`agent.ctx.on(...)`), the same pattern the harness's own
@@ -84,7 +86,15 @@ your own composition:
 ```yaml
 - id: dsh-eco-router
   name: '@joyfoxai/dsh-eco-router'
+  config:
+    tiers: [deepseek-v4-flash, deepseek-v4-pro]   # cheapest first
+    autoRoute: false                               # true → override at agent/request
 ```
+
+- `tiers` — ordered model ids, cheapest first. `eco_route` recommends the
+  cheapest tier with no recorded errors for the task type.
+- `autoRoute` — when `true`, the plugin also overrides the routed model at the
+  `agent/request` waterfall, instead of only recommending it.
 
 The plugin injects only host services (`agents`, `fs`, `tools`) and publishes
 no service of its own, so the row sits loose — it needs no isolate realm.

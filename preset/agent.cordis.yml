@@ -5,3 +5,6 @@
 # Remove `disabled` once `@joyfoxai/dsh-eco-router` is installed/resolvable.
 - id: dsh-eco-router
   name: '@joyfoxai/dsh-eco-router'
+  config:
+    tiers: [deepseek-v4-flash, deepseek-v4-pro]   # cheapest first
+    autoRoute: false                               # true → override at agent/request

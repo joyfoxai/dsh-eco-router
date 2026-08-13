@@ -2,7 +2,7 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 **token 高效模型路由飞轮**。
 
-它把 OpenSquilla 的核心思想——*"同样的预算，更强的能力（same budget, more capability）"*——做成一个自改进路由循环：观测每一轮的 **（任务 → 模型 → 结果）**，按任务类别蒸馏出一张路由表，持久化到 `eco_router.json`，并暴露一个 `eco_route` 工具，为给定任务推荐历史上成功率最高的最便宜模型。
+它把 OpenSquilla 的核心思想——*"同样的预算，更强的能力（same budget, more capability）"*——做成一个自改进路由循环：观测每一轮的 **（任务 → 模型 → 结果）**，按任务类别蒸馏出一张带**逐模型错误计数**的路由表，持久化到 `eco_router.json`，并暴露一个 `eco_route` 工具，把每个任务路由到历史上成功过的最便宜模型档位。
 
 > [English](README.md)
 
@@ -10,7 +10,7 @@
 
 ![verify](docs/verify.png)
 
-（真实加载构建产物 `lib/index.js`，运行 `apply()` 注册 `eco_route` 工具、挂载 5 个观测监听器，模拟一轮「任务 → 模型 → 结果」，再由 `eco_route` 读出蒸馏出的路由表。）
+（真实加载构建产物 `lib/index.js`，以两个模型档位验证：一个 `code` 任务在 `deepseek-v4-flash` 上成功、一个 `media` 任务在 flash 上失败后，`eco_route` 把 `code` 任务路由到便宜档 `deepseek-v4-flash`、把 `media` 任务升级到强档 `deepseek-v4-pro`。）
 
 ## 它做了什么
 
@@ -19,9 +19,10 @@
 | 观测**任务** | `agent/inbox/claimed` → 用户消息文本 + 粗分类（`media` / `code` / `research` / `documents` / `comm` / `general`） |
 | 观测**模型** | `agent/request` 瀑布 → 每步实际路由的 `{ provider, model }` |
 | 观测**结果** | `tools/result`（工具名 + `isError`）与 `agent/error` |
-| 蒸馏 | 按类别聚合 `{ turns, errors, models: { model: count } }` |
+| 蒸馏 | 按类别聚合 `{ turns, errors, models: { model: { uses, errors } } }` |
 | 持久化 | 每轮结束把路由表写入 `eco_router.json` |
-| 推荐 | `eco_route` 工具，供 agent 调用 |
+| 推荐 | `eco_route` → 该任务类型下零错误的最便宜档位 |
+| 路由（可选） | `autoRoute: true` 时还会在 `agent/request` 直接覆盖所路由的模型 |
 
 所有监听器都挂在发起 agent 的**作用域上下文**（`agent.ctx.on(...)`）上——与 harness 自带 `installModelSelection` 相同的模式，因此只观测该 agent 自身的流量。
 
@@ -66,7 +67,13 @@ npm run build          # tsdown → lib/index.js + lib/index.d.ts
 ```yaml
 - id: dsh-eco-router
   name: '@joyfoxai/dsh-eco-router'
+  config:
+    tiers: [deepseek-v4-flash, deepseek-v4-pro]   # 从便宜到贵
+    autoRoute: false                               # true → 在 agent/request 直接覆盖
 ```
+
+- `tiers` —— 有序模型 id，最便宜在前。`eco_route` 推荐该任务类型下无错误记录的最便宜档位。
+- `autoRoute` —— 为 `true` 时，插件会在 `agent/request` 瀑布里直接覆盖所路由的模型（而不只是推荐）。
 
 插件只注入宿主服务（`agents`、`fs`、`tools`），自身不发布任何服务，因此这一行直接平铺即可，无需 isolate 域。
 
