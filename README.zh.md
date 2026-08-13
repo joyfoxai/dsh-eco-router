@@ -77,6 +77,10 @@ npm run build          # tsdown → lib/index.js + lib/index.d.ts
 
 插件只注入宿主服务（`agents`、`fs`、`tools`），自身不发布任何服务，因此这一行直接平铺即可，无需 isolate 域。
 
+## 设置界面
+
+`tiers` 和 `autoRoute` 也可在运行时通过 `dsh-eco-router` 设置命名空间修改（组合的 `config` 是其 `base` 层）。浏览器端注册了一张 `settings.plugin.item` 卡片——位于 **设置 → 插件**——内含 `autoRoute` 开关和一个 `tiers` 多选下拉（数据源来自宿主枚举的模型 `llm.listModels`）。改动经设置 `watch` 热生效，无需重启。
+
 ## 开源 / 发布
 
 1. `npm publish`（scope `@joyfoxai`，`access: public`）。

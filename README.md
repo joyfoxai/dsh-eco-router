@@ -99,6 +99,15 @@ your own composition:
 The plugin injects only host services (`agents`, `fs`, `tools`) and publishes
 no service of its own, so the row sits loose — it needs no isolate realm.
 
+## Settings UI
+
+`tiers` and `autoRoute` are also runtime-editable through the `dsh-eco-router`
+settings namespace (the composition `config` is its `base` layer). The browser
+half registers a `settings.plugin.item` card — under **Settings → Plugins** —
+with an `autoRoute` toggle and a `tiers` multi-select sourced from the models
+the host enumerated (`llm.listModels`). Changes hot-apply through the settings
+`watch` — no restart.
+
 ## Open-sourcing / publishing
 
 1. `npm publish` this package (scope `@joyfoxai`, `access: public`).
