@@ -9,6 +9,9 @@
  * tier for a given task. With `autoRoute` enabled it also overrides the routed
  * model at the `agent/request` waterfall.
  *
+ * `tiers` / `autoRoute` are runtime-editable through the `dsh-eco-router`
+ * settings namespace (base = the composition `config`, user layer = the UI).
+ *
  * @module @joyfoxai/dsh-eco-router
  */
 
@@ -16,34 +19,55 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-// Module augmentations only: registers `ctx.agents`, `ctx.fs`, `ctx.tools`, and
-// the scoped agent/tool events on the Cordis Context and Events interfaces.
+// Module augmentations only: registers `ctx.agents`, `ctx.fs`, `ctx.tools`, `ctx.llm`,
+// `ctx.settings`, and the scoped agent/tool events on the Cordis interfaces.
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/dsh-llm'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 
 export const name = 'dsh-eco-router'
-export const inject = ['agents', 'fs', 'tools']
+export const inject = ['agents', 'fs', 'tools', 'settings', 'llm']
 
-/** Configuration for the eco-router flywheel. */
+const SETTINGS_NS = settingsNamespace('dsh-eco-router')
+
+/** Composition configuration (static defaults; `tiers`/`autoRoute` become the settings `base`). */
 export interface Config {
   /** Absolute path to persist the distilled routing table. Defaults to `<session cwd>/eco_router.json`. */
   routerPath?: string
   /** Maximum characters of a user message kept for task classification. */
   maxTextChars?: number
-  /** Ordered model ids, cheapest first. Used for recommendations and optional auto-routing. */
+  /** Ordered model ids, cheapest first. */
   tiers?: string[]
-  /** When true, the `agent/request` waterfall overrides the routed model. Default false (recommend-only). */
+  /** When true, the `agent/request` waterfall overrides the routed model. */
   autoRoute?: boolean
 }
 
-/** Runtime configuration schema for the plugin. */
+/** Runtime schema for the composition config. */
 export const Config: z<Config> = z.object({
   routerPath: z.string().default(''),
   maxTextChars: z.number().min(64).max(4000).default(500),
   tiers: z.array(z.string()).default(['deepseek-v4-flash', 'deepseek-v4-pro']),
   autoRoute: z.boolean().default(false),
 })
+
+/** Settings-namespace schema. `modelCatalog` is host-derived (read-only to the UI). */
+const settingsSchema = z.object({
+  tiers: z.array(z.string()).default(['deepseek-v4-flash', 'deepseek-v4-pro']),
+  autoRoute: z.boolean().default(false),
+  modelCatalog: z.array(z.object({
+    provider: z.string().required(),
+    id: z.string().required(),
+    name: z.string(),
+  })).default([]),
+})
+
+interface ModelCatalogEntry {
+  provider: string
+  id: string
+  name: string
+}
 
 type Category = 'media' | 'code' | 'research' | 'documents' | 'comm' | 'general'
 
@@ -88,10 +112,24 @@ function textOf(message: { content: readonly ContentBlock[] }): string {
   return out
 }
 
-export function apply(ctx: Context, config: Config = {}): void {
+/** Enumerate every model the mounted providers advertise, for the settings UI dropdown. */
+async function enumerateModels(ctx: Context): Promise<ModelCatalogEntry[]> {
+  try {
+    const out: ModelCatalogEntry[] = []
+    for (const provider of ctx.llm.listProviders()) {
+      try {
+        const models = await ctx.llm.listModels(provider.id)
+        for (const model of models) out.push({ provider: model.provider, id: model.id, name: model.name })
+      } catch { /* a provider that fails to list contributes nothing */ }
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const maxTextChars = config.maxTextChars ?? 500
-  const tiers = config.tiers ?? ['deepseek-v4-flash', 'deepseek-v4-pro']
-  const autoRoute = config.autoRoute ?? false
 
   const agent = ctx.agents.currentInitiator()
   if (agent === undefined) {
@@ -105,6 +143,21 @@ export function apply(ctx: Context, config: Config = {}): void {
     : (typeof cwd === 'string' && cwd.length > 0
       ? `${cwd.replace(/\/+$/, '')}/eco_router.json`
       : `${process.cwd()}/eco_router.json`)
+
+  // Settings: base = composition config; the user layer (UI) overrides tiers/autoRoute.
+  const modelCatalog = await enumerateModels(ctx)
+  let tiers = config.tiers ?? ['deepseek-v4-flash', 'deepseek-v4-pro']
+  let autoRoute = config.autoRoute ?? false
+
+  const scope = ctx.settings.register(SETTINGS_NS, settingsSchema, {
+    base: { tiers, autoRoute, modelCatalog },
+  })
+  const applyResolved = (value: { tiers?: string[]; autoRoute?: boolean }): void => {
+    tiers = value.tiers ?? tiers
+    autoRoute = value.autoRoute ?? autoRoute
+  }
+  applyResolved(scope.get())
+  ctx.effect(() => scope.watch((next) => { applyResolved(next) }))
 
   const byTurn: Record<number, TurnRecord> = {}
   const order: number[] = []
@@ -141,7 +194,6 @@ export function apply(ctx: Context, config: Config = {}): void {
         if (ms === undefined) ms = stat.models[model] = { uses: 0, errors: 0 }
         ms.uses++
       }
-      // Attribute turn-level errors to the turn's primary (first) model.
       if (record.errors > 0 && record.steps.length > 0) {
         const primary = record.steps[0]?.model
         if (primary) {
@@ -154,7 +206,6 @@ export function apply(ctx: Context, config: Config = {}): void {
     categories = next
   }
 
-  /** Cheapest tier model with no recorded errors for this category; cold start → cheapest. */
   function recommendFor(category: Category): { model: string; reason: string } | null {
     const cheapest = tiers[0]
     if (cheapest === undefined) return null
