@@ -8,6 +8,16 @@ distill a per-category routing table, persist it to `eco_router.json`, and
 expose an `eco_route` tool that recommends the cheapest historically-successful
 model for a given task.
 
+> 📖 [简体中文文档](README.zh.md)
+
+## Verified
+
+![verify](docs/verify.png)
+
+Real build verification: the built `lib/index.js` loads, `apply()` registers the
+`eco_route` tool and attaches the five observers, a simulated turn is distilled
+into the routing table, and `eco_route` reads it back.
+
 ## What it does
 
 | Stage | Implementation |
@@ -31,9 +41,11 @@ dsh-eco-router/
 ├── preset/
 │   ├── agent.cordis.yml   # sample composition row referencing this package
 │   └── preset.yml         # preset display metadata
+├── docs/verify.png        # real build-verification screenshot
 ├── package.json
 ├── tsconfig.json
-└── tsdown.config.ts
+├── tsdown.config.ts
+└── README.zh.md           # 简体中文文档
 ```
 
 ## Prerequisites
