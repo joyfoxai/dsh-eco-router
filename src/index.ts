@@ -6,12 +6,14 @@
  * turn's (task → model → result), distills a per-category routing table with
  * per-model error counts, persists it to `eco_router.json`, and registers an
  * `eco_route` tool that recommends the cheapest historically-successful model
- * tier for a given task. With `autoRoute` enabled it also overrides the routed
- * model at the `agent/request` waterfall.
+ * tier for a given task.
  *
- * Mounted as a preset row, so `ctx` is the agent's scoped context: the
- * `agent/*` and `tools/result` listeners register directly on `ctx` and observe
- * only this session's traffic.
+ * `mode: auto` drives the model selection itself (via `agentDefaultModel`), so
+ * the bottom-right selector echoes the routed model and a manual pick falls
+ * back to `manual`. `autoRoute` (the older `agent/request` override) is kept
+ * only as an opt-in for deployments without a model-selection surface.
+ *
+ * Mounted as a preset row, so `ctx` is the agent's scoped context.
  *
  * @module @joyfoxai/dsh-eco-router
  */
@@ -21,19 +23,22 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
-// Module augmentations only: registers ctx.fs / ctx.tools / ctx.llm / ctx.settings
-// and the scoped agent/tool events on the Cordis interfaces.
+// Module augmentations only.
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 
 export const name = 'dsh-eco-router'
-export const inject = ['fs', 'tools', 'settings', 'llm']
+export const inject = ['fs', 'tools', 'settings', 'llm', 'agentDefaultModel']
 
 const SETTINGS_NS = settingsNamespace('dsh-eco-router')
+const DEFAULT_MODEL_NS = settingsNamespace('agent-default-model')
 
-/** Composition configuration (static defaults; `tiers`/`autoRoute` become the settings `base`). */
+type Mode = 'auto' | 'manual'
+
+/** Composition configuration (static defaults; `tiers`/`autoRoute`/`mode` become the settings `base`). */
 export interface Config {
   /** Path to persist the distilled routing table. Defaults to `eco_router.json` in the session workspace. */
   routerPath?: string
@@ -41,8 +46,10 @@ export interface Config {
   maxTextChars?: number
   /** Ordered model ids, cheapest first. */
   tiers?: string[]
-  /** When true, the `agent/request` waterfall overrides the routed model. */
+  /** When true, also override the routed model at the `agent/request` waterfall (legacy opt-in). */
   autoRoute?: boolean
+  /** `auto` drives the model selection via `agentDefaultModel`; `manual` leaves it to the user. */
+  mode?: Mode
 }
 
 /** Runtime schema for the composition config. */
@@ -51,12 +58,14 @@ export const Config: z<Config> = z.object({
   maxTextChars: z.number().min(64).max(4000).default(500),
   tiers: z.array(z.string()).default(['deepseek-v4-flash', 'deepseek-v4-pro']),
   autoRoute: z.boolean().default(false),
+  mode: z.union(['auto', 'manual']).default('manual'),
 })
 
 /** Settings-namespace schema. `modelCatalog` is host-derived (read-only to the UI). */
 const settingsSchema = z.object({
   tiers: z.array(z.string()).default(['deepseek-v4-flash', 'deepseek-v4-pro']),
   autoRoute: z.boolean().default(false),
+  mode: z.union(['auto', 'manual']).default('manual'),
   modelCatalog: z.array(z.object({
     provider: z.string().required(),
     id: z.string().required(),
@@ -138,13 +147,16 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const modelCatalog = await enumerateModels(ctx)
   let tiers = config.tiers ?? ['deepseek-v4-flash', 'deepseek-v4-pro']
   let autoRoute = config.autoRoute ?? false
+  let mode: Mode = config.mode ?? 'manual'
+  let selfRouting = false
 
   const scope = ctx.settings.register(SETTINGS_NS, settingsSchema, {
-    base: { tiers, autoRoute, modelCatalog },
+    base: { tiers, autoRoute, mode, modelCatalog },
   })
-  const applyResolved = (value: { tiers?: string[]; autoRoute?: boolean }): void => {
+  const applyResolved = (value: { tiers?: string[]; autoRoute?: boolean; mode?: Mode }): void => {
     tiers = value.tiers ?? tiers
     autoRoute = value.autoRoute ?? autoRoute
+    mode = value.mode ?? mode
   }
   applyResolved(scope.get())
   ctx.effect(() => scope.watch((next) => { applyResolved(next) }))
@@ -217,6 +229,20 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     return { model: tiers[tiers.length - 1] ?? cheapest, reason: 'all tiers errored; escalate to most capable' }
   }
 
+  /** Drive the model selection to `model` (auto mode) — the bottom-right echoes it. */
+  async function routeTo(model: string): Promise<void> {
+    try {
+      const current = ctx.agentDefaultModel.currentSelection()
+      if (current.model === model) return
+      selfRouting = true
+      try {
+        await ctx.agentDefaultModel.saveSelection({ provider: current.provider, model })
+      } finally {
+        selfRouting = false
+      }
+    } catch { /* routing is advisory */ }
+  }
+
   async function persist(): Promise<void> {
     distill()
     const data = { kind: 'dsh-eco-router', version: 1, turnCount: order.length, tiers, categories }
@@ -236,6 +262,10 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       currentCategory = classify(text)
       currentTurn = payload.turn
       ensureTurn(payload.turn)
+      if (mode === 'auto') {
+        const recommendation = recommendFor(currentCategory)
+        if (recommendation !== null) void routeTo(recommendation.model)
+      }
     } catch { /* observer never breaks the loop */ }
   })
 
@@ -281,6 +311,16 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     void persist()
   })
 
+  // A manual model pick (via the bottom-right selector) writes the default too;
+  // when it wasn't our own auto write, fall back to manual.
+  ctx.on('settings/updated', (ns) => {
+    try {
+      if (ns !== DEFAULT_MODEL_NS || mode !== 'auto' || selfRouting) return
+      mode = 'manual'
+      void scope.update({ mode: 'manual' }).catch(() => {})
+    } catch { /* observer never breaks the loop */ }
+  })
+
   ctx.tools.register(defineTool({
     name: 'eco_route',
     description: 'Recommend or inspect the dsh-eco-router routing decision. Given a task, return the cheapest historically-successful model tier (recommend), or dump the full learned routing table (list).',
@@ -295,7 +335,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     async execute(args) {
       distill()
       if (args.action === 'list') {
-        return JSON.stringify({ kind: 'dsh-eco-router', turnCount: order.length, tiers, categories }, null, 2)
+        return JSON.stringify({ kind: 'dsh-eco-router', turnCount: order.length, tiers, mode, categories }, null, 2)
       }
       const category = args.task ? classify(args.task) : 'general'
       const recommendation = recommendFor(category)
@@ -303,6 +343,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         kind: 'dsh-eco-router',
         taskCategory: category,
         tiers,
+        mode,
         recommendation,
         categoryStat: categories[category] ?? null,
       }, null, 2)
