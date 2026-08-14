@@ -33,12 +33,18 @@
       "default": "./lib/index.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    }
   },
   "files": [
     "lib/index.js",
     "lib/index.d.ts",
-    "src"
+    "src",
+    "lib/client.js",
+    "lib/client.d.ts"
   ],
   "scripts": {
     "build": "tsdown",
