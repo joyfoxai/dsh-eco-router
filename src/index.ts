@@ -161,6 +161,17 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   applyResolved(scope.get())
   ctx.effect(() => scope.watch((next) => { applyResolved(next) }))
 
+  // Expose the settings namespace to configuration clients: registering a
+  // configurable provider entry puts `dsh-eco-router` into the api-proxy's
+  // model-provider namespace allowlist, so the browser can read/write mode &
+  // tiers. It carries no adapter, so it never appears in the model selector.
+  ctx.effect(() => ctx.llm.registerConfigurableProviders([{
+    provider: 'dsh-eco-router',
+    displayName: 'dsh-eco-router',
+    settingsNs: SETTINGS_NS,
+    settingsPath: [],
+  }]))
+
   const byTurn: Record<number, TurnRecord> = {}
   const order: number[] = []
   let categories: Record<string, CategoryStat> = {}

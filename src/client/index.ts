@@ -4,7 +4,7 @@
  * @module @joyfoxai/dsh-eco-router/client
  */
 import type { ClientContext, SettingsScope } from '@deepseek-ai/dsh-client-runtime/client'
-import { createElement, useSyncExternalStore } from 'react'
+import { createElement, useSyncExternalStore, useState } from 'react'
 import type { ChangeEvent } from 'react'
 // Type-only merges: ctx.slots (ui-slots), ctx.settingsScope (ui-settings),
 // the 'settings.plugin.item' SlotMap entry (ui-settings-plugins),
@@ -51,6 +51,7 @@ function setMode(scope: SettingsScope<Settings>, mode: 'auto' | 'manual'): void 
 }
 
 function EcoModeSwitch({ scope }: { scope: SettingsScope<Settings> }) {
+  const [clicked, setClicked] = useState(false)
   const snapshot = useSyncExternalStore(
     (listener) => scope.subscribe(listener),
     () => scope.getSnapshot(),
@@ -61,8 +62,15 @@ function EcoModeSwitch({ scope }: { scope: SettingsScope<Settings> }) {
 
   return createElement('button', {
     type: 'button',
-    onClick: () => { setMode(scope, auto ? 'manual' : 'auto') },
-    title: `mode=${mode} status=${status}`,
+    onClick: () => {
+      console.log('[dsh-eco-router] onClick fired, status=' + status)
+      setClicked((c) => !c)
+      scope.set('mode', auto ? 'manual' : 'auto').then(
+        () => console.log('[dsh-eco-router] set resolved'),
+        (error) => console.error('[dsh-eco-router] set rejected:', error),
+      )
+    },
+    title: `mode=${mode} status=${status} clicked=${clicked}`,
     style: {
       display: 'inline-flex',
       alignItems: 'center',
@@ -76,7 +84,7 @@ function EcoModeSwitch({ scope }: { scope: SettingsScope<Settings> }) {
       fontSize: 12,
       cursor: 'pointer',
     },
-  }, auto ? 'eco · auto' : 'eco · manual')
+  }, auto ? 'eco · auto' : 'eco · manual', clicked ? ' · CLICKED' : '')
 }
 
 function EcoRouterCard({ scope }: { scope: SettingsScope<Settings> }) {
