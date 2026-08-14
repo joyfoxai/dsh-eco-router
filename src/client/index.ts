@@ -12,8 +12,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-connection/client'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
 
-export const inject = ['slots', 'settingsScope']
+export const inject = ['slots', 'settingsScope', 'connection', 'remote']
 
 const NS = 'dsh-eco-router'
 
