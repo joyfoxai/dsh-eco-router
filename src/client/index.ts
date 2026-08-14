@@ -7,7 +7,9 @@ import type { ClientContext, SettingsScope } from '@deepseek-ai/dsh-client-runti
 import { createElement, useSyncExternalStore } from 'react'
 import type { ChangeEvent } from 'react'
 // Type-only merges: ctx.slots (ui-slots), ctx.settingsScope (ui-settings),
-// and the 'settings.plugin.item' SlotMap entry (ui-settings-plugins).
+// the 'settings.plugin.item' SlotMap entry (ui-settings-plugins),
+// the 'conversation.input.right' SlotMap entry (ui-conversation),
+// and the ctx.connection / ctx.remote merges.
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
@@ -27,15 +29,25 @@ interface Settings {
 }
 
 export function apply(ctx: ClientContext): void {
+  // Bind the settings scope ONCE at apply time (not inside the slot render
+  // functions), so every render shares one stable scope and one subscription.
+  const settingsScope = ctx.settingsScope.bind<Settings>({ namespace: NS })
+
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
     { name: 'settings.plugin.item', id: 'dsh-eco-router', order: 100, label: 'dsh-eco-router' },
-    () => createElement(EcoRouterCard, { scope: ctx.settingsScope.bind<Settings>({ namespace: NS }) }),
+    () => createElement(EcoRouterCard, { scope: settingsScope }),
   ))
 
   ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
     { name: 'conversation.input.right', id: 'dsh-eco-router-mode', order: 100, label: 'dsh-eco-router' },
-    () => createElement(EcoModeSwitch, { scope: ctx.settingsScope.bind<Settings>({ namespace: NS }) }),
+    () => createElement(EcoModeSwitch, { scope: settingsScope }),
   ))
+}
+
+function setMode(scope: SettingsScope<Settings>, mode: 'auto' | 'manual'): void {
+  scope.set('mode', mode).catch((error) => {
+    console.error('[dsh-eco-router] set mode failed:', error)
+  })
 }
 
 function EcoModeSwitch({ scope }: { scope: SettingsScope<Settings> }) {
@@ -45,11 +57,12 @@ function EcoModeSwitch({ scope }: { scope: SettingsScope<Settings> }) {
   )
   const mode = snapshot.value?.mode ?? 'manual'
   const auto = mode === 'auto'
+  const status = snapshot.status
 
   return createElement('button', {
     type: 'button',
-    onClick: () => { void scope.set('mode', auto ? 'manual' : 'auto') },
-    title: auto ? 'eco-route 自动路由（点击切回手动）' : 'eco-route 手动（点击开启自动路由）',
+    onClick: () => { setMode(scope, auto ? 'manual' : 'auto') },
+    title: `mode=${mode} status=${status}`,
     style: {
       display: 'inline-flex',
       alignItems: 'center',
@@ -83,7 +96,7 @@ function EcoRouterCard({ scope }: { scope: SettingsScope<Settings> }) {
         type: 'checkbox',
         checked: mode === 'auto',
         onChange: (event: ChangeEvent<HTMLInputElement>) => {
-          void scope.set('mode', event.target.checked ? 'auto' : 'manual')
+          setMode(scope, event.target.checked ? 'auto' : 'manual')
         },
       }),
       'auto 档（自动路由到最便宜的成功模型）',
@@ -93,7 +106,9 @@ function EcoRouterCard({ scope }: { scope: SettingsScope<Settings> }) {
         type: 'checkbox',
         checked: autoRoute,
         onChange: (event: ChangeEvent<HTMLInputElement>) => {
-          void scope.set('autoRoute', event.target.checked)
+          scope.set('autoRoute', event.target.checked).catch((error) => {
+            console.error('[dsh-eco-router] set autoRoute failed:', error)
+          })
         },
       }),
       'autoRoute（旧版：在 agent/request 直接覆盖模型）',
@@ -107,7 +122,9 @@ function EcoRouterCard({ scope }: { scope: SettingsScope<Settings> }) {
         onChange: (event: ChangeEvent<HTMLSelectElement>) => {
           const selected: string[] = []
           for (const option of event.target.selectedOptions) selected.push(option.value)
-          void scope.set('tiers', selected)
+          scope.set('tiers', selected).catch((error) => {
+            console.error('[dsh-eco-router] set tiers failed:', error)
+          })
         },
         style: { width: '100%' },
       },
